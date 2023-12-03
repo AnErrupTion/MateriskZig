@@ -1,0 +1,10 @@
+.{
+    .name = "Materisk",
+    .version = "1.0.0",
+    .dependencies = .{
+        .parsertoolkit = .{
+            .url = "https://github.com/MasterQ32/parser-toolkit/archive/5416f1ff721cbfbf91397e557fc400e004804361.tar.gz",
+            .hash = "12207450343aa027d9478b85b67b2f390360851d17dbf00e95376d133140276479c2",
+        },
+    },
+}
