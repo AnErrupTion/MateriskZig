@@ -1,12 +1,12 @@
 struct VgaEntry {
-    char: u8,
+    character: u8,
     color: u8,
 };
 
 func main(): void {
     var mut buffer: *VgaEntry = cast: *VgaEntry 0xB8000;
     var entry: VgaEntry = init VgaEntry {
-        char = 65,
+        character = 65,
         color = 15,
     };
 

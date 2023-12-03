@@ -8,22 +8,25 @@ pub fn main() !void {
     defer arena.deinit();
 
     const allocator = arena.allocator();
-    const code = @embedFile("main.msk");
-    const stdout = std.io.getStdOut().writer();
+    const directory = std.fs.cwd();
 
-    _ = try stdout.write("Parsing...\n");
+    std.log.info("Reading file...", .{});
+    const input_file = try directory.openFile("main.msk", .{});
+    defer input_file.close();
+
+    const code = try input_file.readToEndAlloc(allocator, 128 * 1024);
+
+    std.log.info("Parsing...", .{});
     const nodes = try Parser.parse(allocator, code);
 
-    var c_code = std.ArrayList(u8).init(allocator);
+    const output_file = try directory.createFile("main.c", .{});
+    defer output_file.close();
 
-    const writer = c_code.writer();
-    _ = try writer.write("int main() {\n    MateriskFunction_main();\n    return 0;\n}\n\n");
+    const writer = output_file.writer();
 
-    _ = try stdout.write("Binding types...\n");
+    std.log.info("Binding types...", .{});
     const binder = try Binder.init(allocator, nodes.items);
 
-    _ = try stdout.write("Emitting code...\n");
-    for (nodes.items) |node| try emitter.codegen(0, writer, binder, node);
-
-    _ = try stdout.write(c_code.items);
+    std.log.info("Emitting code...", .{});
+    try emitter.emit(writer, binder, nodes.items);
 }

@@ -1,7 +1,13 @@
 const Parser = @import("Parser.zig");
 const Binder = @import("Binder.zig");
 
-pub fn codegen(padding: usize, writer: anytype, binder: Binder, node: Parser.Node) !void {
+pub fn emit(writer: anytype, binder: Binder, nodes: []Parser.Node) !void {
+    for (nodes) |node| try codegen(0, writer, binder, node);
+
+    _ = try writer.write("int main() {\n    MateriskFunction_main();\n    return 0;\n}\n\n");
+}
+
+fn codegen(padding: usize, writer: anytype, binder: Binder, node: Parser.Node) !void {
     switch (node) {
         .hexadecimal_literal => |num| try writer.print("{s}", .{num}),
         .decimal_literal => |num| try writer.print("{s}", .{num}),
@@ -67,7 +73,7 @@ pub fn codegen(padding: usize, writer: anytype, binder: Binder, node: Parser.Nod
         },
         .structure => |stc| {
             const name = try binder.getTypeName(stc.name);
-            _ = try writer.write("struct __attribute__((__packed__)) ");
+            _ = try writer.write("typedef struct __attribute__((__packed__)) ");
             _ = try writer.write(name);
             _ = try writer.write(" {\n");
             const new_padding = padding + 4;
