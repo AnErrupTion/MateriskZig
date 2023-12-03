@@ -16,6 +16,7 @@ pub fn init(allocator: Allocator, nodes: []Parser.Node) !Binder {
     };
 
     try binder.names.put("void", "void");
+    try binder.names.put("bool", "unsigned char");
     try binder.names.put("i8", "signed char");
     try binder.names.put("i16", "signed short");
     try binder.names.put("i32", "signed int");

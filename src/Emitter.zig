@@ -21,8 +21,8 @@ pub fn emit(self: *Emitter, writer: anytype, nodes: []Parser.Node) !void {
 
 fn codegen(self: *Emitter, writer: anytype, node: Parser.Node) !void {
     switch (node) {
-        .hexadecimal_literal => |num| try writer.print("{s}", .{num}),
-        .decimal_literal => |num| try writer.print("{s}", .{num}),
+        .hexadecimal_literal => |hex| try writer.print("{s}", .{hex}),
+        .decimal_literal => |dec| try writer.print("{s}", .{dec}),
         .identifier => |idn| _ = try writer.write(idn),
         .variable => |vrb| {
             if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
@@ -136,6 +136,49 @@ fn codegen(self: *Emitter, writer: anytype, node: Parser.Node) !void {
             _ = try writer.write(") ");
 
             try self.codegen(writer, cst.value.*);
+        },
+        .compare => |cmp| {
+            try self.codegen(writer, cmp.lhs.*);
+
+            _ = try writer.write(switch (cmp.operator) {
+                .equal => " == ",
+                .not_equal => " != ",
+                .below_equal => " <= ",
+                .above_equal => " >= ",
+                .below => " < ",
+                .above => " > ",
+            });
+
+            try self.codegen(writer, cmp.rhs.*);
+        },
+        .if_condition => |ifc| {
+            if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
+
+            _ = try writer.write("if (");
+
+            try self.codegen(writer, ifc.condition.*);
+
+            _ = try writer.write(") {\n");
+
+            self.padding += 4;
+            for (ifc.then_block) |child| try self.codegen(writer, child.*);
+            self.padding -= 4;
+
+            if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
+            try writer.writeByte('}');
+
+            if (ifc.else_block) |else_block| {
+                _ = try writer.write(" else {\n");
+
+                self.padding += 4;
+                for (else_block) |child| try self.codegen(writer, child.*);
+                self.padding -= 4;
+
+                if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
+                try writer.writeByte('}');
+            }
+
+            try writer.writeByte('\n');
         },
     }
 }

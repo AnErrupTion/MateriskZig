@@ -10,5 +10,12 @@ func main(): void {
         color = 15,
     };
 
+    var mut value: i32 = -1;
+    if (cmp value == -1) {
+        value = 0;
+    } else {
+        value = 90;
+    };
+
     *buffer = entry;
 };

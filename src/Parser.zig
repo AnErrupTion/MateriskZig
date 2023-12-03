@@ -11,6 +11,9 @@ const TokenType = enum {
     struct_keyword,
     init_keyword,
     cast_keyword,
+    if_keyword,
+    else_keyword,
+    cmp_keyword,
     hexadecimal_number,
     decimal_number,
     identifier,
@@ -22,6 +25,12 @@ const TokenType = enum {
     @"%",
     @"(",
     @")",
+    @"==",
+    @"!=",
+    @"<=",
+    @">=",
+    @"<",
+    @">",
     @"=",
     @",",
     @";",
@@ -50,6 +59,9 @@ const Tokenizer = ptk.Tokenizer(TokenType, &[_]Pattern{
     Pattern.create(.struct_keyword, ptk.matchers.literal("struct")),
     Pattern.create(.init_keyword, ptk.matchers.literal("init")),
     Pattern.create(.cast_keyword, ptk.matchers.literal("cast")),
+    Pattern.create(.if_keyword, ptk.matchers.literal("if")),
+    Pattern.create(.else_keyword, ptk.matchers.literal("else")),
+    Pattern.create(.cmp_keyword, ptk.matchers.literal("cmp")),
     Pattern.create(.hexadecimal_number, ptk.matchers.sequenceOf(.{ ptk.matchers.literal("0x"), ptk.matchers.hexadecimalNumber, ptk.matchers.literal("."), ptk.matchers.hexadecimalNumber })),
     Pattern.create(.hexadecimal_number, ptk.matchers.sequenceOf(.{ ptk.matchers.literal("0x"), ptk.matchers.hexadecimalNumber })),
     Pattern.create(.decimal_number, ptk.matchers.sequenceOf(.{ ptk.matchers.decimalNumber, ptk.matchers.literal("."), ptk.matchers.decimalNumber })),
@@ -63,6 +75,12 @@ const Tokenizer = ptk.Tokenizer(TokenType, &[_]Pattern{
     Pattern.create(.@"%", ptk.matchers.literal("%")),
     Pattern.create(.@"(", ptk.matchers.literal("(")),
     Pattern.create(.@")", ptk.matchers.literal(")")),
+    Pattern.create(.@"==", ptk.matchers.literal("==")),
+    Pattern.create(.@"!=", ptk.matchers.literal("!=")),
+    Pattern.create(.@"<=", ptk.matchers.literal("<=")),
+    Pattern.create(.@">=", ptk.matchers.literal(">=")),
+    Pattern.create(.@"<", ptk.matchers.literal("<")),
+    Pattern.create(.@">", ptk.matchers.literal(">")),
     Pattern.create(.@"=", ptk.matchers.literal("=")),
     Pattern.create(.@",", ptk.matchers.literal(",")),
     Pattern.create(.@":", ptk.matchers.literal(":")),
@@ -73,11 +91,25 @@ const Tokenizer = ptk.Tokenizer(TokenType, &[_]Pattern{
 
 const ParserCore = ptk.ParserCore(Tokenizer, .{.whitespace});
 
-const Error = ParserCore.Error || std.mem.Allocator.Error || std.fmt.ParseIntError || error{ ExpectedAssignmentFoundExpression, InvalidType };
+const Error = ParserCore.Error || std.mem.Allocator.Error || std.fmt.ParseIntError || error{
+    ExpectedAssignmentFoundExpression,
+    InvalidType,
+    InvalidOperator,
+};
 const ruleset = ptk.RuleSet(TokenType);
 
 const String = []const u8;
 const ChildNode = *const Node;
+
+const CompareOperator = enum {
+    equal,
+    not_equal,
+    below,
+    above,
+    below_equal,
+    above_equal,
+};
+
 const TwoOperandNode = struct {
     lhs: ChildNode,
     rhs: ChildNode,
@@ -118,6 +150,16 @@ const CastNode = struct {
     type: []const u8,
     value: ChildNode,
 };
+const CompareNode = struct {
+    lhs: ChildNode,
+    operator: CompareOperator,
+    rhs: ChildNode,
+};
+const IfConditionNode = struct {
+    condition: ChildNode,
+    then_block: []ChildNode,
+    else_block: ?[]ChildNode,
+};
 pub const Node = union(enum) {
     hexadecimal_literal: []const u8,
     decimal_literal: []const u8,
@@ -136,6 +178,8 @@ pub const Node = union(enum) {
     field: FieldNode,
     struct_initialization: StructInitializationNode,
     cast: CastNode,
+    compare: CompareNode,
+    if_condition: IfConditionNode,
 };
 
 const NodeList = std.ArrayList(Node);
@@ -161,7 +205,9 @@ fn acceptTopLevelStatement(self: *Parser) Error!Node {
     const state = self.core.saveState();
     errdefer self.core.restoreState(state);
 
-    if (self.acceptStructStatement()) |stc| { return stc; } else |_| {}
+    if (self.acceptStructStatement()) |stc| {
+        return stc;
+    } else |_| {}
 
     return try self.acceptFunctionStatement();
 }
@@ -218,13 +264,13 @@ fn acceptFunctionStatement(self: *Parser) Error!Node {
     _ = try self.core.accept(comptime ruleset.is(.@"("));
     _ = try self.core.accept(comptime ruleset.is(.@")"));
     const return_type = try self.acceptType();
-    const block = try self.acceptFunctionBlock();
+    const block = try self.acceptNestedBlock();
     _ = try self.core.accept(comptime ruleset.is(.@";"));
 
     return .{ .function = .{ .name = name.text, .return_type = return_type, .block = block } };
 }
 
-fn acceptFunctionBlock(self: *Parser) Error![]ChildNode {
+fn acceptNestedBlock(self: *Parser) Error![]ChildNode {
     const state = self.core.saveState();
     errdefer self.core.restoreState(state);
 
@@ -248,10 +294,15 @@ fn acceptTopLevelNestedStatement(self: *Parser) Error!Node {
     const state = self.core.saveState();
     errdefer self.core.restoreState(state);
 
-    if (self.acceptVariableStatement()) |vrb| { return vrb; } else |_| {}
+    if (self.acceptVariableStatement()) |vrb| {
+        return vrb;
+    } else |_| {}
     if (self.acceptAssignment()) |agn| {
         _ = try self.core.accept(comptime ruleset.is(.@";"));
         return agn;
+    } else |_| {}
+    if (self.acceptIfStatement()) |ifs| {
+        return ifs;
     } else |_| {}
 
     const value = try self.acceptCall();
@@ -299,12 +350,44 @@ fn acceptAssignment(self: *Parser) Error!Node {
     return .{ .assignment = .{ .name = name.text, .value = try self.dupeNode(value), .dereference = dereference } };
 }
 
+fn acceptIfStatement(self: *Parser) Error!Node {
+    const state = self.core.saveState();
+    errdefer self.core.restoreState(state);
+
+    _ = try self.core.accept(comptime ruleset.is(.if_keyword));
+    _ = try self.core.accept(comptime ruleset.is(.@"("));
+    const condition = try self.acceptExpression();
+    _ = try self.core.accept(comptime ruleset.is(.@")"));
+    const then_block = try self.acceptNestedBlock();
+
+    const else_rule = comptime ruleset.is(.else_keyword);
+    const token = try self.core.peek() orelse return error.EndOfStream;
+    const has_else = else_rule(token.type);
+
+    var else_block: ?[]ChildNode = null;
+    if (has_else) {
+        _ = try self.core.nextToken();
+        else_block = try self.acceptNestedBlock();
+    }
+
+    _ = try self.core.accept(comptime ruleset.is(.@";"));
+
+    return .{ .if_condition = .{ .condition = try self.dupeNode(condition), .then_block = then_block, .else_block = else_block } };
+}
+
 fn acceptExpression(self: *Parser) Error!Node {
     const state = self.core.saveState();
     errdefer self.core.restoreState(state);
 
-    if (self.acceptStructInitializationExpression()) |int| { return int; } else |_| {}
-    if (self.acceptCastExpression()) |cst| { return cst; } else |_| {}
+    if (self.acceptStructInitializationExpression()) |int| {
+        return int;
+    } else |_| {}
+    if (self.acceptCastExpression()) |cst| {
+        return cst;
+    } else |_| {}
+    if (self.acceptCompareExpression()) |cmp| {
+        return cmp;
+    } else |_| {}
 
     return try self.acceptSumExpression();
 }
@@ -329,6 +412,30 @@ fn acceptCastExpression(self: *Parser) Error!Node {
     const value = try self.acceptExpression();
 
     return .{ .cast = .{ .type = @"type", .value = try self.dupeNode(value) } };
+}
+
+fn acceptCompareExpression(self: *Parser) Error!Node {
+    const state = self.core.saveState();
+    errdefer self.core.restoreState(state);
+
+    _ = try self.core.accept(comptime ruleset.is(.cmp_keyword));
+
+    const lhs = try self.acceptExpression();
+    const operator_token = (try self.core.nextToken()) orelse return error.EndOfStream;
+
+    var operator: CompareOperator = switch (operator_token.type) {
+        .@"==" => .equal,
+        .@"!=" => .not_equal,
+        .@"<=" => .below_equal,
+        .@">=" => .above_equal,
+        .@"<" => .below,
+        .@">" => .above,
+        else => return error.InvalidOperator,
+    };
+
+    const rhs = try self.acceptExpression();
+
+    return .{ .compare = .{ .lhs = try self.dupeNode(lhs), .operator = operator, .rhs = try self.dupeNode(rhs) } };
 }
 
 fn acceptStructInitializationAssignments(self: *Parser) Error![]ChildNode {
@@ -401,7 +508,9 @@ fn acceptCallExpression(self: *Parser) Error!Node {
     const state = self.core.saveState();
     errdefer self.core.restoreState(state);
 
-    if (self.acceptCall()) |cll| { return cll; } else |_| {}
+    if (self.acceptCall()) |cll| {
+        return cll;
+    } else |_| {}
 
     return try self.acceptValueExpression();
 }
