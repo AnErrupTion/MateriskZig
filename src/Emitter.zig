@@ -1,91 +1,113 @@
+const Emitter = @This();
+
 const Parser = @import("Parser.zig");
 const Binder = @import("Binder.zig");
 
-pub fn emit(writer: anytype, binder: Binder, nodes: []Parser.Node) !void {
-    for (nodes) |node| try codegen(0, writer, binder, node);
+binder: Binder,
+padding: usize,
+
+pub fn init(binder: Binder) Emitter {
+    return .{
+        .binder = binder,
+        .padding = 0,
+    };
+}
+
+pub fn emit(self: *Emitter, writer: anytype, nodes: []Parser.Node) !void {
+    for (nodes) |node| try self.codegen(writer, node);
 
     _ = try writer.write("int main() {\n    MateriskFunction_main();\n    return 0;\n}\n\n");
 }
 
-fn codegen(padding: usize, writer: anytype, binder: Binder, node: Parser.Node) !void {
+fn codegen(self: *Emitter, writer: anytype, node: Parser.Node) !void {
     switch (node) {
         .hexadecimal_literal => |num| try writer.print("{s}", .{num}),
         .decimal_literal => |num| try writer.print("{s}", .{num}),
         .identifier => |idn| _ = try writer.write(idn),
         .variable => |vrb| {
-            if (padding > 0) try writer.writeByteNTimes(' ', padding);
+            if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
 
             if (!vrb.mutable) _ = try writer.write("const ");
-            _ = try writer.write(try binder.getTypeName(vrb.type));
+            _ = try writer.write(try self.binder.getTypeName(vrb.type));
             try writer.writeByte(' ');
             _ = try writer.write(vrb.name);
             _ = try writer.write(" = ");
-            try codegen(padding, writer, binder, vrb.value.*);
+
+            try self.codegen(writer, vrb.value.*);
+
             _ = try writer.write(";\n");
         },
         .assignment => |agn| {
-            if (padding > 0) try writer.writeByteNTimes(' ', padding);
+            if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
 
             if (agn.dereference) try writer.writeByte('*');
             _ = try writer.write(agn.name);
             _ = try writer.write(" = ");
-            try codegen(padding, writer, binder, agn.value.*);
+
+            try self.codegen(writer, agn.value.*);
+
             _ = try writer.write(";\n");
         },
         .add => |add| {
-            try codegen(padding, writer, binder, add.lhs.*);
+            try self.codegen(writer, add.lhs.*);
             _ = try writer.write(" + ");
-            try codegen(padding, writer, binder, add.rhs.*);
+            try self.codegen(writer, add.rhs.*);
         },
         .subtract => |sub| {
-            try codegen(padding, writer, binder, sub.lhs.*);
+            try self.codegen(writer, sub.lhs.*);
             _ = try writer.write(" - ");
-            try codegen(padding, writer, binder, sub.rhs.*);
+            try self.codegen(writer, sub.rhs.*);
         },
         .multiply => |mul| {
-            try codegen(padding, writer, binder, mul.lhs.*);
+            try self.codegen(writer, mul.lhs.*);
             _ = try writer.write(" * ");
-            try codegen(padding, writer, binder, mul.rhs.*);
+            try self.codegen(writer, mul.rhs.*);
         },
         .divide => |div| {
-            try codegen(padding, writer, binder, div.lhs.*);
+            try self.codegen(writer, div.lhs.*);
             _ = try writer.write(" / ");
-            try codegen(padding, writer, binder, div.rhs.*);
+            try self.codegen(writer, div.rhs.*);
         },
         .modulus => |mod| {
-            try codegen(padding, writer, binder, mod.lhs.*);
+            try self.codegen(writer, mod.lhs.*);
             _ = try writer.write(" % ");
-            try codegen(padding, writer, binder, mod.rhs.*);
+            try self.codegen(writer, mod.rhs.*);
         },
         .negate => |neg| {
             try writer.writeByte('-');
-            try codegen(padding, writer, binder, neg.*);
+            try self.codegen(writer, neg.*);
         },
         .call => unreachable,
         .function => |fun| {
-            _ = try writer.write(try binder.getTypeName(fun.return_type));
+            _ = try writer.write(try self.binder.getTypeName(fun.return_type));
             try writer.writeByte(' ');
-            _ = try writer.write(try binder.getFunctionName(fun.name));
+            _ = try writer.write(try self.binder.getFunctionName(fun.name));
             _ = try writer.write("() {\n");
-            const new_padding = padding + 4;
-            for (fun.block) |child| try codegen(new_padding, writer, binder, child.*);
+
+            self.padding += 4;
+            for (fun.block) |child| try self.codegen(writer, child.*);
+            self.padding -= 4;
+
             _ = try writer.write("}\n\n");
         },
         .structure => |stc| {
-            const name = try binder.getTypeName(stc.name);
+            const name = try self.binder.getTypeName(stc.name);
             _ = try writer.write("typedef struct __attribute__((__packed__)) ");
             _ = try writer.write(name);
             _ = try writer.write(" {\n");
-            const new_padding = padding + 4;
-            for (stc.fields) |field| try codegen(new_padding, writer, binder, field.*);
+
+            self.padding += 4;
+            for (stc.fields) |field| try self.codegen(writer, field.*);
+            self.padding -= 4;
+
             _ = try writer.write("} ");
             _ = try writer.write(name);
             _ = try writer.write(";\n\n");
         },
         .field => |fld| {
-            if (padding > 0) try writer.writeByteNTimes(' ', padding);
+            if (self.padding > 0) try writer.writeByteNTimes(' ', self.padding);
 
-            _ = try writer.write(try binder.getTypeName(fld.type));
+            _ = try writer.write(try self.binder.getTypeName(fld.type));
             try writer.writeByte(' ');
             _ = try writer.write(fld.name);
             _ = try writer.write(";\n");
@@ -93,21 +115,27 @@ fn codegen(padding: usize, writer: anytype, binder: Binder, node: Parser.Node) !
         .struct_initialization => |sti| {
             _ = try writer.write("{ ");
             const end = sti.assignments.len - 1;
+
             for (sti.assignments, 0..) |child, i| {
                 const assignment = child.assignment;
+
                 try writer.writeByte('.');
                 _ = try writer.write(assignment.name);
                 _ = try writer.write(" = ");
-                try codegen(padding, writer, binder, assignment.value.*);
+
+                try self.codegen(writer, assignment.value.*);
+
                 if (i != end) _ = try writer.write(", ");
             }
+
             _ = try writer.write(" }");
         },
         .cast => |cst| {
             try writer.writeByte('(');
-            _ = try writer.write(try binder.getTypeName(cst.type));
-            try writer.writeByte(')');
-            try codegen(padding, writer, binder, cst.value.*);
+            _ = try writer.write(try self.binder.getTypeName(cst.type));
+            _ = try writer.write(") ");
+
+            try self.codegen(writer, cst.value.*);
         },
     }
 }

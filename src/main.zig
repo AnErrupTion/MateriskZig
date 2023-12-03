@@ -1,7 +1,7 @@
 const std = @import("std");
 const Parser = @import("Parser.zig");
 const Binder = @import("Binder.zig");
-const emitter = @import("emitter.zig");
+const Emitter = @import("Emitter.zig");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -28,5 +28,6 @@ pub fn main() !void {
     const binder = try Binder.init(allocator, nodes.items);
 
     std.log.info("Emitting code...", .{});
-    try emitter.emit(writer, binder, nodes.items);
+    var emitter = Emitter.init(binder);
+    try emitter.emit(writer, nodes.items);
 }

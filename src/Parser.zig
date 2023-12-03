@@ -1,8 +1,8 @@
+const Parser = @This();
+
 const std = @import("std");
 const ptk = @import("parser-toolkit");
 const Allocator = std.mem.Allocator;
-
-const Parser = @This();
 
 const TokenType = enum {
     var_keyword,

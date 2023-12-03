@@ -1,8 +1,8 @@
+const Binder = @This();
+
 const std = @import("std");
 const Parser = @import("Parser.zig");
 const Allocator = std.mem.Allocator;
-
-const Binder = @This();
 
 const TypeMap = std.StringArrayHashMap([]const u8);
 
